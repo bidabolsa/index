@@ -5,9 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Video Library</title>
   <style>
-    :root {
-      --max-width: 1200px;
-    }
+    :root { --max-width: 1200px; }
     * { box-sizing: border-box; }
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; background: #0b0c10; color: #f0f3f7; }
     header { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(8px); background: rgba(11,12,16,.75); border-bottom: 1px solid #1f2833; }
@@ -15,13 +13,11 @@
     .title { font-weight: 800; letter-spacing: .3px; margin: 0 0 6px; }
     .controls { display: grid; gap: 8px; grid-template-columns: 1fr 180px 160px; }
     .controls input, .controls select { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #1f2833; background: #0d1117; color: #e5e7eb; }
-    .controls .right { text-align: right; }
     main { max-width: var(--max-width); margin: 0 auto; padding: 16px; }
     .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
     .card { background: #111418; border: 1px solid #1f2833; border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; }
     .thumb { aspect-ratio: 16 / 9; width: 100%; background: #0d1117; display: grid; place-items: center; overflow: hidden; }
-    .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-    .thumb iframe, .thumb video { width: 100%; height: 100%; border: 0; display: block; }
+    .thumb img, .thumb iframe, .thumb video { width: 100%; height: 100%; object-fit: cover; border: 0; display: block; }
     .meta { padding: 12px; display: grid; gap: 6px; }
     .meta h3 { margin: 0; font-size: 16px; line-height: 1.3; }
     .badges { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
@@ -31,9 +27,7 @@
     .empty { text-align: center; opacity: .7; padding: 40px 0; }
     .pill { display: inline-block; padding: 3px 8px; border: 1px solid #1f2833; border-radius: 999px; font-size: 12px; color: #cbd5e1; }
     .row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
-    @media (max-width: 720px) {
-      .controls { grid-template-columns: 1fr; }
-    }
+    @media (max-width: 720px) { .controls { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -61,27 +55,21 @@
     </div>
     <div class="wrap">
       <div id="grid" class="grid" aria-live="polite"></div>
-      <div id="empty" class="empty" hidden>Không có video phù hợp.</div>
+      <div id="empty" class="empty" hidden>Không tải được dữ liệu. Kiểm tra quyền truy cập CSV.</div>
     </div>
   </main>
   <footer class="wrap">
     <div>
-      Dữ liệu được tải từ Google Sheet công khai. Lưu ý: chỉ dùng các liên kết video hợp lệ (YouTube, Vimeo, hoặc file .mp4 trực tiếp).
+      Dữ liệu được tải từ Google Sheet công khai (Share → Anyone with link → Viewer). Hỗ trợ YouTube, Vimeo, hoặc file .mp4.
     </div>
   </footer>
 
   <script>
-    // =====================
-    // 1) CẤU HÌNH BẢNG TÍNH
-    // =====================
-    // Cách làm nhanh: File > Share > Publish to the web > chọn sheet
-    // Sau đó đặt SHEET_ID = id trong URL tài liệu Google Sheets và SHEET_NAME đúng tên sheet
-    const SHEET_ID = "1t7QeslUIWda40rtC-56nE2XJ1Qjm-LgSZpPfO561MtI";     // ví dụ: 1a2B3cD4... (lấy trong URL)
-    const SHEET_NAME = "Videos";                // tên trang sheet, ví dụ: "Videos"
+    // 1) Cấu hình CSV URL trực tiếp từ Google Sheets (không cần Publish to web)
+    const SHEET_ID = "1t7QeslUIWda40rtC-56nE2XJ1Qjm-LgSZpPfO561MtI";
+    const SHEET_GID = 0; // Thay nếu tab không phải gid=0
+    const CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${SHEET_GID}`;
 
-    // Mặc định sheet nên có các cột sau (tên cột đúng, không phân biệt hoa/thường):
-    // Title | VideoURL | Category | Date | Description | Thumbnail
-    // - Date có thể ở dạng yyyy-mm-dd
     const COLUMN_MAP = {
       title: "Title",
       url: "VideoURL",
@@ -91,79 +79,51 @@
       thumb: "Thumbnail"
     };
 
-    // =====================
-    // 2) UTILITIES
-    // =====================
-    const gvizUrl = (sheetId, sheetName) =>
-      `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
-
-    function parseGvizJSON(text) {
-      // Strip leading junk: google.visualization.Query.setResponse(...);
-      const json = text.replace(/^.*setResponse\(/, '').replace(/\);?\s*$/, '');
-      return JSON.parse(json);
-    }
-
-    function toDate(val) {
-      if (!val) return null;
-      const d = new Date(val);
-      return isNaN(d.getTime()) ? null : d;
-    }
-
-    function youtubeIdFromUrl(url) {
-      try {
-        const u = new URL(url);
-        if (u.hostname.includes('youtube.com')) return u.searchParams.get('v');
-        if (u.hostname === 'youtu.be') return u.pathname.slice(1);
-      } catch {}
-      return null;
-    }
-
-    function vimeoIdFromUrl(url) {
-      try {
-        const u = new URL(url);
-        if (u.hostname.includes('vimeo.com')) {
-          const parts = u.pathname.split('/').filter(Boolean);
-          return parts[0] || null;
+    function parseCSV(text) {
+      const rows = []; let row = []; let cur = ''; let inQuotes = false;
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (inQuotes) {
+          if (ch === '"') {
+            if (text[i + 1] === '"') { cur += '"'; i++; } else { inQuotes = false; }
+          } else { cur += ch; }
+        } else {
+          if (ch === '"') { inQuotes = true; }
+          else if (ch === ',') { row.push(cur); cur = ''; }
+          else if (ch === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; }
+          else if (ch === '\r') { /* ignore */ }
+          else { cur += ch; }
         }
-      } catch {}
-      return null;
+      }
+      if (cur.length || row.length) { row.push(cur); rows.push(row); }
+      return rows;
     }
 
-    function isMp4(url) {
-      try { return new URL(url).pathname.toLowerCase().endsWith('.mp4'); } catch { return false; }
-    }
-
+    function toDate(val) { if (!val) return null; const d = new Date(val); return isNaN(d.getTime()) ? null : d; }
+    function youtubeIdFromUrl(url) { try { const u = new URL(url); if (u.hostname.includes('youtube.com')) return u.searchParams.get('v'); if (u.hostname === 'youtu.be') return u.pathname.slice(1); } catch {} return null; }
+    function vimeoIdFromUrl(url) { try { const u = new URL(url); if (u.hostname.includes('vimeo.com')) { const parts = u.pathname.split('/').filter(Boolean); return parts[0] || null; } } catch {} return null; }
+    function isMp4(url) { try { return new URL(url).pathname.toLowerCase().endsWith('.mp4'); } catch { return false; } }
     function formatCount(n) { return new Intl.NumberFormat().format(n) + (n > 1 ? ' videos' : ' video'); }
 
-    // =====================
-    // 3) LOAD & RENDER
-    // =====================
     const state = { items: [], filtered: [] };
 
     async function load() {
-      const url = gvizUrl(SHEET_ID, SHEET_NAME);
-      const res = await fetch(url);
-      const raw = await res.text();
-      const data = parseGvizJSON(raw);
+      const res = await fetch(CSV_URL);
+      if (!res.ok) throw new Error('CSV fetch failed');
+      const text = await res.text();
+      const rows = parseCSV(text);
+      if (!rows.length) throw new Error('CSV empty');
 
-      const cols = data.table.cols.map(c => (c.label || c.id || '').trim());
-      const get = (row, label) => {
-        const idx = cols.findIndex(c => c.toLowerCase() === label.toLowerCase());
-        if (idx === -1) return '';
-        const cell = row.c[idx];
-        if (!cell) return '';
-        if (cell.f) return cell.f; // formatted string
-        if (cell.v === null || cell.v === undefined) return '';
-        return typeof cell.v === 'object' && 'v' in cell.v ? cell.v.v : cell.v;
-      };
+      const headers = rows[0].map(h => (h || '').trim());
+      const idx = (label) => headers.findIndex(h => h.toLowerCase() === label.toLowerCase());
 
-      state.items = (data.table.rows || []).map(r => ({
-        title: String(get(r, COLUMN_MAP.title)).trim(),
-        url: String(get(r, COLUMN_MAP.url)).trim(),
-        category: String(get(r, COLUMN_MAP.category) || '').trim(),
-        date: toDate(get(r, COLUMN_MAP.date) || ''),
-        description: String(get(r, COLUMN_MAP.description) || '').trim(),
-        thumb: String(get(r, COLUMN_MAP.thumb) || '').trim(),
+      state.items = rows.slice(1).map(r => ({
+        title: String(r[idx(COLUMN_MAP.title)] || '').trim(),
+        url: String(r[idx(COLUMN_MAP.url)] || '').trim(),
+        category: String(r[idx(COLUMN_MAP.category)] || '').trim(),
+        date: toDate(r[idx(COLUMN_MAP.date)] || ''),
+        description: String(r[idx(COLUMN_MAP.description)] || '').trim(),
+        thumb: String(r[idx(COLUMN_MAP.thumb)] || '').trim(),
       })).filter(x => x.title && x.url);
 
       buildCategoryFilter();
@@ -172,10 +132,10 @@
 
     function buildCategoryFilter() {
       const select = document.getElementById('category');
+      select.innerHTML = '<option value="">Tất cả danh mục</option>';
       const cats = Array.from(new Set(state.items.map(x => x.category).filter(Boolean))).sort((a,b) => a.localeCompare(b));
       for (const c of cats) {
-        const opt = document.createElement('option');
-        opt.value = c; opt.textContent = c; select.appendChild(opt);
+        const opt = document.createElement('option'); opt.value = c; opt.textContent = c; select.appendChild(opt);
       }
     }
 
@@ -187,7 +147,7 @@
       let arr = state.items.filter(x => (
         (!cat || x.category === cat) &&
         (!q || (x.title.toLowerCase().includes(q) || x.description.toLowerCase().includes(q)))
-      ))
+      ));
 
       arr.sort((a,b) => {
         switch (sort) {
@@ -199,8 +159,7 @@
         }
       });
 
-      state.filtered = arr;
-      render();
+      state.filtered = arr; render();
     }
 
     function render() {
@@ -211,18 +170,11 @@
       grid.innerHTML = '';
       count.textContent = formatCount(state.filtered.length);
 
-      if (!state.filtered.length) {
-        empty.hidden = false; return;
-      } else {
-        empty.hidden = true;
-      }
+      if (!state.filtered.length) { empty.hidden = false; return; } else { empty.hidden = true; }
 
       for (const item of state.filtered) {
-        const card = document.createElement('article');
-        card.className = 'card';
-
-        const th = document.createElement('div');
-        th.className = 'thumb';
+        const card = document.createElement('article'); card.className = 'card';
+        const th = document.createElement('div'); th.className = 'thumb';
 
         const yid = youtubeIdFromUrl(item.url);
         const vid = vimeoIdFromUrl(item.url);
@@ -238,38 +190,17 @@
           th.innerHTML = `<a href="${item.url}" target="_blank" rel="noopener">Mở video</a>`;
         }
 
-        const meta = document.createElement('div');
-        meta.className = 'meta';
+        const meta = document.createElement('div'); meta.className = 'meta';
+        const h3 = document.createElement('h3'); h3.textContent = item.title;
+        const badges = document.createElement('div'); badges.className = 'badges';
 
-        const h3 = document.createElement('h3');
-        h3.textContent = item.title;
+        if (item.category) { const cat = document.createElement('span'); cat.className = 'badge'; cat.textContent = item.category; badges.appendChild(cat); }
+        if (item.date) { const dt = document.createElement('span'); dt.className = 'badge'; dt.textContent = item.date.toISOString().slice(0,10); badges.appendChild(dt); }
 
-        const badges = document.createElement('div');
-        badges.className = 'badges';
-        if (item.category) {
-          const cat = document.createElement('span');
-          cat.className = 'badge';
-          cat.textContent = item.category;
-          badges.appendChild(cat);
-        }
-        if (item.date) {
-          const dt = document.createElement('span');
-          dt.className = 'badge';
-          dt.textContent = item.date.toISOString().slice(0,10);
-          badges.appendChild(dt);
-        }
+        const desc = document.createElement('div'); desc.className = 'desc'; desc.textContent = item.description;
 
-        const desc = document.createElement('div');
-        desc.className = 'desc';
-        desc.textContent = item.description;
-
-        meta.appendChild(h3);
-        meta.appendChild(badges);
-        if (item.description) meta.appendChild(desc);
-
-        card.appendChild(th);
-        card.appendChild(meta);
-        grid.appendChild(card);
+        meta.appendChild(h3); meta.appendChild(badges); if (item.description) meta.appendChild(desc);
+        card.appendChild(th); card.appendChild(meta); grid.appendChild(card);
       }
     }
 
@@ -280,7 +211,7 @@
     load().catch(err => {
       console.error(err);
       document.getElementById('empty').hidden = false;
-      document.getElementById('empty').textContent = 'Không tải được dữ liệu. Kiểm tra SHEET_ID / quyền Publish.';
+      document.getElementById('empty').textContent = 'Không tải được CSV. Kiểm tra quyền chia sẻ hoặc gid.';
     });
   </script>
 </body>
