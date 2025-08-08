@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Video Library</title>
+  <style>
+    :root {
+      --max-width: 1200px;
+    }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; background: #0b0c10; color: #f0f3f7; }
+    header { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(8px); background: rgba(11,12,16,.75); border-bottom: 1px solid #1f2833; }
+    .wrap { max-width: var(--max-width); margin: 0 auto; padding: 16px; }
+    .title { font-weight: 800; letter-spacing: .3px; margin: 0 0 6px; }
+    .controls { display: grid; gap: 8px; grid-template-columns: 1fr 180px 160px; }
+    .controls input, .controls select { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #1f2833; background: #0d1117; color: #e5e7eb; }
+    .controls .right { text-align: right; }
+    main { max-width: var(--max-width); margin: 0 auto; padding: 16px; }
+    .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+    .card { background: #111418; border: 1px solid #1f2833; border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; }
+    .thumb { aspect-ratio: 16 / 9; width: 100%; background: #0d1117; display: grid; place-items: center; overflow: hidden; }
+    .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .thumb iframe, .thumb video { width: 100%; height: 100%; border: 0; display: block; }
+    .meta { padding: 12px; display: grid; gap: 6px; }
+    .meta h3 { margin: 0; font-size: 16px; line-height: 1.3; }
+    .badges { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .badge { font-size: 12px; background: #0b1220; border: 1px solid #1f2833; color: #cbd5e1; padding: 4px 8px; border-radius: 999px; }
+    .desc { font-size: 13px; color: #cbd5e1; opacity: .9; }
+    footer { max-width: var(--max-width); margin: 24px auto 60px; padding: 0 16px; opacity: .8; font-size: 13px; color: #cbd5e1; }
+    .empty { text-align: center; opacity: .7; padding: 40px 0; }
+    .pill { display: inline-block; padding: 3px 8px; border: 1px solid #1f2833; border-radius: 999px; font-size: 12px; color: #cbd5e1; }
+    .row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+    @media (max-width: 720px) {
+      .controls { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1 class="title">Video Library</h1>
+      <div class="controls">
+        <input id="search" type="search" placeholder="Tìm theo tiêu đề/mô tả..." />
+        <select id="category">
+          <option value="">Tất cả danh mục</option>
+        </select>
+        <select id="sort">
+          <option value="date_desc">Mới nhất</option>
+          <option value="date_asc">Cũ nhất</option>
+          <option value="title_asc">A → Z</option>
+          <option value="title_desc">Z → A</option>
+        </select>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="row wrap" style="padding-bottom: 8px;">
+      <div id="count" class="pill">0 video</div>
+    </div>
+    <div class="wrap">
+      <div id="grid" class="grid" aria-live="polite"></div>
+      <div id="empty" class="empty" hidden>Không có video phù hợp.</div>
+    </div>
+  </main>
+  <footer class="wrap">
+    <div>
+      Dữ liệu được tải từ Google Sheet công khai. Lưu ý: chỉ dùng các liên kết video hợp lệ (YouTube, Vimeo, hoặc file .mp4 trực tiếp).
+    </div>
+  </footer>
+
+  <script>
+    // =====================
+    // 1) CẤU HÌNH BẢNG TÍNH
+    // =====================
+    // Cách làm nhanh: File > Share > Publish to the web > chọn sheet
+    // Sau đó đặt SHEET_ID = id trong URL tài liệu Google Sheets và SHEET_NAME đúng tên sheet
+    const SHEET_ID = "1t7QeslUIWda40rtC-56nE2XJ1Qjm-LgSZpPfO561MtI";     // ví dụ: 1a2B3cD4... (lấy trong URL)
+    const SHEET_NAME = "Videos";                // tên trang sheet, ví dụ: "Videos"
+
+    // Mặc định sheet nên có các cột sau (tên cột đúng, không phân biệt hoa/thường):
+    // Title | VideoURL | Category | Date | Description | Thumbnail
+    // - Date có thể ở dạng yyyy-mm-dd
+    const COLUMN_MAP = {
+      title: "Title",
+      url: "VideoURL",
+      category: "Category",
+      date: "Date",
+      description: "Description",
+      thumb: "Thumbnail"
+    };
+
+    // =====================
+    // 2) UTILITIES
+    // =====================
+    const gvizUrl = (sheetId, sheetName) =>
+      `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
+
+    function parseGvizJSON(text) {
+      // Strip leading junk: google.visualization.Query.setResponse(...);
+      const json = text.replace(/^.*setResponse\(/, '').replace(/\);?\s*$/, '');
+      return JSON.parse(json);
+    }
+
+    function toDate(val) {
+      if (!val) return null;
+      const d = new Date(val);
+      return isNaN(d.getTime()) ? null : d;
+    }
+
+    function youtubeIdFromUrl(url) {
+      try {
+        const u = new URL(url);
+        if (u.hostname.includes('youtube.com')) return u.searchParams.get('v');
+        if (u.hostname === 'youtu.be') return u.pathname.slice(1);
+      } catch {}
+      return null;
+    }
+
+    function vimeoIdFromUrl(url) {
+      try {
+        const u = new URL(url);
+        if (u.hostname.includes('vimeo.com')) {
+          const parts = u.pathname.split('/').filter(Boolean);
+          return parts[0] || null;
+        }
+      } catch {}
+      return null;
+    }
+
+    function isMp4(url) {
+      try { return new URL(url).pathname.toLowerCase().endsWith('.mp4'); } catch { return false; }
+    }
+
+    function formatCount(n) { return new Intl.NumberFormat().format(n) + (n > 1 ? ' videos' : ' video'); }
+
+    // =====================
+    // 3) LOAD & RENDER
+    // =====================
+    const state = { items: [], filtered: [] };
+
+    async function load() {
+      const url = gvizUrl(SHEET_ID, SHEET_NAME);
+      const res = await fetch(url);
+      const raw = await res.text();
+      const data = parseGvizJSON(raw);
+
+      const cols = data.table.cols.map(c => (c.label || c.id || '').trim());
+      const get = (row, label) => {
+        const idx = cols.findIndex(c => c.toLowerCase() === label.toLowerCase());
+        if (idx === -1) return '';
+        const cell = row.c[idx];
+        if (!cell) return '';
+        if (cell.f) return cell.f; // formatted string
+        if (cell.v === null || cell.v === undefined) return '';
+        return typeof cell.v === 'object' && 'v' in cell.v ? cell.v.v : cell.v;
+      };
+
+      state.items = (data.table.rows || []).map(r => ({
+        title: String(get(r, COLUMN_MAP.title)).trim(),
+        url: String(get(r, COLUMN_MAP.url)).trim(),
+        category: String(get(r, COLUMN_MAP.category) || '').trim(),
+        date: toDate(get(r, COLUMN_MAP.date) || ''),
+        description: String(get(r, COLUMN_MAP.description) || '').trim(),
+        thumb: String(get(r, COLUMN_MAP.thumb) || '').trim(),
+      })).filter(x => x.title && x.url);
+
+      buildCategoryFilter();
+      applyFilters();
+    }
+
+    function buildCategoryFilter() {
+      const select = document.getElementById('category');
+      const cats = Array.from(new Set(state.items.map(x => x.category).filter(Boolean))).sort((a,b) => a.localeCompare(b));
+      for (const c of cats) {
+        const opt = document.createElement('option');
+        opt.value = c; opt.textContent = c; select.appendChild(opt);
+      }
+    }
+
+    function applyFilters() {
+      const q = document.getElementById('search').value.trim().toLowerCase();
+      const cat = document.getElementById('category').value;
+      const sort = document.getElementById('sort').value;
+
+      let arr = state.items.filter(x => (
+        (!cat || x.category === cat) &&
+        (!q || (x.title.toLowerCase().includes(q) || x.description.toLowerCase().includes(q)))
+      ))
+
+      arr.sort((a,b) => {
+        switch (sort) {
+          case 'date_asc': return (a.date?.getTime()||0) - (b.date?.getTime()||0);
+          case 'title_asc': return a.title.localeCompare(b.title);
+          case 'title_desc': return b.title.localeCompare(a.title);
+          case 'date_desc':
+          default: return (b.date?.getTime()||0) - (a.date?.getTime()||0);
+        }
+      });
+
+      state.filtered = arr;
+      render();
+    }
+
+    function render() {
+      const grid = document.getElementById('grid');
+      const empty = document.getElementById('empty');
+      const count = document.getElementById('count');
+
+      grid.innerHTML = '';
+      count.textContent = formatCount(state.filtered.length);
+
+      if (!state.filtered.length) {
+        empty.hidden = false; return;
+      } else {
+        empty.hidden = true;
+      }
+
+      for (const item of state.filtered) {
+        const card = document.createElement('article');
+        card.className = 'card';
+
+        const th = document.createElement('div');
+        th.className = 'thumb';
+
+        const yid = youtubeIdFromUrl(item.url);
+        const vid = vimeoIdFromUrl(item.url);
+        if (yid) {
+          th.innerHTML = `<iframe src="https://www.youtube.com/embed/${yid}" title="YouTube video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>`;
+        } else if (vid) {
+          th.innerHTML = `<iframe src="https://player.vimeo.com/video/${vid}" title="Vimeo video" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen></iframe>`;
+        } else if (isMp4(item.url)) {
+          th.innerHTML = `<video src="${item.url}" controls preload="metadata"></video>`;
+        } else if (item.thumb) {
+          th.innerHTML = `<a href="${item.url}" target="_blank" rel="noopener"><img src="${item.thumb}" alt="${item.title}"></a>`;
+        } else {
+          th.innerHTML = `<a href="${item.url}" target="_blank" rel="noopener">Mở video</a>`;
+        }
+
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+
+        const h3 = document.createElement('h3');
+        h3.textContent = item.title;
+
+        const badges = document.createElement('div');
+        badges.className = 'badges';
+        if (item.category) {
+          const cat = document.createElement('span');
+          cat.className = 'badge';
+          cat.textContent = item.category;
+          badges.appendChild(cat);
+        }
+        if (item.date) {
+          const dt = document.createElement('span');
+          dt.className = 'badge';
+          dt.textContent = item.date.toISOString().slice(0,10);
+          badges.appendChild(dt);
+        }
+
+        const desc = document.createElement('div');
+        desc.className = 'desc';
+        desc.textContent = item.description;
+
+        meta.appendChild(h3);
+        meta.appendChild(badges);
+        if (item.description) meta.appendChild(desc);
+
+        card.appendChild(th);
+        card.appendChild(meta);
+        grid.appendChild(card);
+      }
+    }
+
+    document.getElementById('search').addEventListener('input', applyFilters);
+    document.getElementById('category').addEventListener('change', applyFilters);
+    document.getElementById('sort').addEventListener('change', applyFilters);
+
+    load().catch(err => {
+      console.error(err);
+      document.getElementById('empty').hidden = false;
+      document.getElementById('empty').textContent = 'Không tải được dữ liệu. Kiểm tra SHEET_ID / quyền Publish.';
+    });
+  </script>
+</body>
+</html>
